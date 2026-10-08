@@ -1,0 +1,26 @@
+# Build configuration. esp-hal runtime configuration lives in esp-config.toml.
+include = ["esp-config.toml"]
+
+[target.xtensa-esp32s3-none-elf]
+# `cargo run --release` flashes and opens the serial monitor.
+# Flash at 80 MHz: the weights are read from flash for every token, so this is worth
+# ~50% in tok/s (21.9 -> 33.5 on stories260K). Don't use QIO: espflash writes the
+# bootloader in QIO, the ROM doesn't set the flash's Quad Enable bit, and the board
+# gets stuck in a reset loop (`ets_loader.c 78`).
+runner = "espflash flash --monitor --chip esp32s3 --flash-mode dio --flash-freq 80mhz"
+
+[build]
+# the linkall.x linker script is added by build.rs
+rustflags = [
+  "-C", "link-arg=-nostartfiles",
+]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]
+
+[env]
+# Model and tokenizer embedded in the firmware via include_bytes!.
+# The default is the small model, which fits in SRAM; stories15M needs PSRAM.
+TINYLLM_MODEL     = { value = "../../models/stories260K.tlm", relative = true }
+TINYLLM_TOKENIZER = { value = "../../models/tok512.bin", relative = true }

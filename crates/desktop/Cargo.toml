@@ -1,0 +1,11 @@
+[package]
+name = "tinyllm-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tinyllm"
+path = "src/main.rs"
+
+[dependencies]
+tinyllm-core = { path = "../tinyllm-core" }

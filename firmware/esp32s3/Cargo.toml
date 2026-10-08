@@ -1,0 +1,41 @@
+[package]
+name         = "tinyllm-esp32s3"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.95"
+
+# Versions and features aligned with `esp-generate` 1.4.0:
+#   esp-generate --headless -o esp32s3 -o esp32s3-wroom-1-octal-psram \
+#       -o unstable-hal -o alloc -o log -o esp-backtrace <name>
+# To update esp-hal, generate a fresh project and compare it with this file.
+
+[dependencies]
+tinyllm-core = { path = "../../crates/tinyllm-core" }
+
+esp-hal                = { version = "~1.2.2", features = ["esp32s3", "log-04", "unstable"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3", "log-04"] }
+esp-alloc              = { version = "0.11.0", features = ["esp32s3"] }
+# "jtag-serial" instead of the default "auto": on the esp32s3, auto mode in esp-println
+# 0.18.0 reads the wrong address (0x60038000, the USB-Serial-JTAG FIFO, instead of
+# INT_RAW at 0x60038008) and every print! consumes bytes typed into the console.
+# Consequence: output only goes to the native USB port, not to UART0.
+esp-println = { version = "0.18.0", default-features = false, features = [
+  "esp32s3",
+  "log-04",
+  "critical-section",
+  "colors",
+  "jtag-serial",
+] }
+esp-backtrace          = { version = "0.20.0", features = ["esp32s3", "panic-handler", "println"] }
+critical-section       = "1.2.0"
+log                    = "0.4.27"
+
+[profile.dev]
+# inference code without optimization is unusable; always optimize
+opt-level = 3
+
+[profile.release]
+opt-level     = 3       # the template uses "s" (size); here speed matters more
+lto           = "fat"
+codegen-units = 1
+debug         = 2       # symbols help probe-rs; they don't go to flash

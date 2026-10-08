@@ -1,0 +1,12 @@
+[package]
+name = "tinyllm-core"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny transformer inference (quantized llama2.c format) in no_std + alloc"
+
+[dependencies]
+# Math functions without std (cosf, sinf, expf, sqrtf)
+libm = "0.2"
+
+[features]
+default = []

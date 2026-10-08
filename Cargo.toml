@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tinyllm-core",
+    "crates/desktop",
+]
+# The firmware stays outside the workspace because it uses a different toolchain (esp) and target.
+exclude = ["firmware/esp32s3"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

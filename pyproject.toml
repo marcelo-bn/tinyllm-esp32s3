@@ -1,0 +1,12 @@
+[project]
+name = "tinyllm-s3-tools"
+version = "0.1.0"
+description = "tinyllm-s3 PC scripts: .bin -> .tlm export and numpy reference"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+]
+
+[tool.uv]
+# tools/ holds standalone scripts, not an installable package
+package = false

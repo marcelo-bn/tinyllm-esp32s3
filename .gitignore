@@ -1,0 +1,7 @@
+/target
+/firmware/esp32s3/target
+/models/*
+!/models/README.md
+/.venv
+__pycache__/
+*.pyc
