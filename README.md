@@ -1,5 +1,7 @@
 # tinyllm-s3
 
+https://github.com/user-attachments/assets/2a377652-7823-4910-9f27-54a1a05c2b26
+
 This guide takes you from a fresh machine to a tiny language model generating
 text on an ESP32-S3 N16R8 (16 MB flash, 8 MB PSRAM). Follow the parts in order:
 each one ends with a check that has to pass before you move on.

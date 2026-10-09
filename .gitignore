@@ -5,3 +5,6 @@
 /.venv
 __pycache__/
 *.pyc
+
+# demo videos: hosted on GitHub (user-attachments), not in the repo
+*.mp4
