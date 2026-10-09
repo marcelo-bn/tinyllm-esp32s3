@@ -33,9 +33,6 @@ static TOKENIZER_BYTES: &[u8] = include_bytes!(env!("TINYLLM_TOKENIZER"));
 
 /// Prompt used when you press Enter without having typed one before.
 const DEFAULT_PROMPT: &str = "Once upon a time";
-/// KV cache capacity in tokens (prompt + generated text). This is what sets
-/// the heap used by the state: ~1.3 KB per token on stories260K.
-const MAX_STEPS: usize = 128;
 const DEFAULT_TEMPERATURE: f32 = 0.8;
 /// Maximum length of a line typed into the console.
 const MAX_LINE: usize = 256;
@@ -58,9 +55,9 @@ fn main() -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    // Main heap in internal SRAM. With stories260K and MAX_STEPS=128 the state
-    // takes ~168 KB, the KV cache being two contiguous 80 KB blocks.
-    // esp-alloc uses the regions in the order they are registered.
+    // Main heap in internal SRAM: model scales, activations, logits and other
+    // small buffers. esp-alloc uses the regions in the order they are registered,
+    // so anything that doesn't fit here (the KV cache) falls through to PSRAM.
     esp_alloc::heap_allocator!(size: 224 * 1024);
     // Bootloader RAM, free after boot: a reserve for small allocations.
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
@@ -106,7 +103,10 @@ fn main() -> ! {
     );
 
     let tok = Tokenizer::from_bytes(TOKENIZER_BYTES, c.vocab_size).expect("tokenizer");
-    let mut state = State::new(&c, MAX_STEPS);
+    // The state holds as many tokens as the model was trained on (seq_len:
+    // 512 for stories260K, 256 for stories15M), so stories can reach their
+    // natural end. Its KV cache is too big for SRAM and lands in PSRAM.
+    let mut state = State::new(&c, c.seq_len);
     println!("state: {} KB on the heap", state.heap_bytes() / 1024);
 
     let mut settings = Settings {
@@ -186,6 +186,8 @@ fn generate(
     let mut sampler = Sampler::new(s.temperature, seed as u64);
     let mut token = tokens[0];
     let mut generated = 0usize;
+    // true when the model ended the story itself, false when /steps cut it off
+    let mut finished = false;
     let t0 = Instant::now();
 
     for pos in 0..steps {
@@ -197,7 +199,10 @@ fn generate(
             generated += 1;
             sampler.sample(&mut l)
         };
+        // The model marks the end of a story by starting the next one (BOS),
+        // as in its training data.
         if next == tokenizer::EOS || next == tokenizer::BOS {
+            finished = true;
             break;
         }
         piece.clear();
@@ -216,11 +221,12 @@ fn generate(
     let rate = generated as u64 * 100_000 / ms.max(1);
     println!();
     println!(
-        "-- {} tokens in {} ms ({}.{:02} tok/s)",
+        "-- {} tokens in {} ms ({}.{:02} tok/s), {}",
         generated,
         ms,
         rate / 100,
-        rate % 100
+        rate % 100,
+        if finished { "end of story" } else { "length limit" }
     );
 }
 

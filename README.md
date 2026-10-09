@@ -137,7 +137,7 @@ every script through `uv run`.
 
 Start with **stories260K**, a 260-thousand-parameter model trained on short
 children's stories. It runs entirely from the chip's fast internal RAM and
-generates about 34 tokens per second on the board. Part 5 moves up to the
+generates 20 to 35 tokens per second on the board. Part 5 moves up to the
 60× larger stories15M once everything works.
 
 ```bash
@@ -321,7 +321,7 @@ Expected:
 ```
 Chip type:         esp32s3
 ...
-App/part. size:    445,920/16,384,000 bytes, 2.72%
+App/part. size:    445,952/16,384,000 bytes, 2.72%
 ... Image successfully saved!
 ```
 
@@ -339,7 +339,7 @@ Expected (sizes in bytes):
 
 ```
 .bss                    229484   ...
-.rodata                 312884   ...
+.rodata                 312916   ...
 .stack                   95904   ...
 .dram2_uninit            73744   ...
 ```
@@ -351,30 +351,33 @@ What each line means:
  └─ .rodata        ~305 KB   model weights (270 KB) + tokenizer + strings
 
  INTERNAL SRAM
- ├─ .bss           ~225 KB   main heap (224 KB): KV cache, activations, logits
+ ├─ .bss           ~225 KB   main heap (224 KB): weight scales, activations, logits
  ├─ .stack          ~95 KB   whatever SRAM is left becomes the stack
  └─ .dram2_uninit    72 KB   RAM the bootloader used, reclaimed as a spare heap
 
  PSRAM (8 MB, external chip; not in the size output, set up at boot)
- └─ heap #3        8 MB      whatever doesn't fit in the two SRAM heaps
+ └─ heap #3        8 MB      the KV cache, and whatever else doesn't fit in SRAM
 ```
 
-Why the main heap is 224 KB: with `MAX_STEPS = 128`, the generation state takes
-about 168 KB, and the largest pieces are the key and value caches, **two
-contiguous 80 KB blocks**. A block that size cannot be split between heap
-regions, so the 72 KB reclaimed region alone would never be enough. The extra
-room above 168 KB holds the per-row weight scales and the tokenizer index.
+The firmware reserves a KV cache for every position the model supports (512
+tokens for stories260K), so a story can go on until the model itself ends it.
+That cache is **two contiguous 320 KB blocks**, one for keys and one for
+values. A block cannot be split between heap regions, and neither fits in
+SRAM, so both land in PSRAM.
 
 The allocator fills the heaps **in the order they are registered**: the main
-SRAM heap first, then the reclaimed region, and the PSRAM last. SRAM is much
-faster, so this keeps everything stories260K needs in SRAM, and only the
-overflow of a larger model (Part 5) lands in PSRAM.
+SRAM heap first, then the reclaimed region, and the PSRAM last. SRAM is
+faster, so the small buffers touched on every token (weight scales,
+activations, logits, the tokenizer index) stay in SRAM, and only the big
+blocks overflow into PSRAM. Moving the KV cache to PSRAM costs about 5% of
+speed: a 128-token story ran at 33.9 tok/s with the cache in SRAM and 32.1
+tok/s with it in PSRAM.
 
 ### Settings you can change
 
 | Setting | Where | Default | Notes |
 |---|---|---|---|
-| `MAX_STEPS` | `src/main.rs` | `128` | Longest text the board can generate, prompt included. Each extra step adds ~1.3 KB of KV cache; if you raise it, raise the heap size in `heap_allocator!` too |
+| Maximum story length | the model (`seq_len`) | 512 tokens for stories260K, 256 for stories15M | The KV cache is sized for the model's full length. Use `/steps` in the console to stop stories earlier |
 | `DEFAULT_PROMPT`, `DEFAULT_TEMPERATURE` | `src/main.rs` | `"Once upon a time"`, `0.8` | Starting values only: you change both from the console without rebuilding (Part 4) |
 | Embedded model and tokenizer | `make flash MODEL=… TOK=…` | `stories260K`, `tok512.bin` | Files in `models/`. Running `cargo` directly uses `TINYLLM_MODEL` / `TINYLLM_TOKENIZER` in `.cargo/config.toml` instead |
 | Flash mode and clock | `runner` in `.cargo/config.toml` | `--flash-mode dio --flash-freq 80mhz` | See below |
@@ -387,8 +390,8 @@ shows how to change them from the console.
 
 **Why the flash clock matters.** The weights stay in flash and the model reads
 all of them for every token, so the flash speed directly limits tokens per
-second. Measured on stories260K: 21.9 tok/s at 40 MHz, **33.5 tok/s at
-80 MHz**. Do not switch to `qio`: `espflash` writes the bootloader in QIO mode
+second. Measured on stories260K with 128-token stories: 21.9 tok/s at
+40 MHz, **33.5 tok/s at 80 MHz**. Do not switch to `qio`: `espflash` writes the bootloader in QIO mode
 too, the chip's ROM can't enable quad mode on the flash chip, and the board
 gets stuck in a reset loop (see Part 3, Troubleshooting).
 
@@ -551,13 +554,13 @@ lost. After that it loads the model and opens a console:
 tinyllm-esp32s3
 model: 269 KB in flash
 dim=64 hidden=172 layers=5 heads=8 kv_heads=4 vocab=512 seq=512
-state: 168 KB on the heap
+state: 660 KB on the heap
 
 Type the start of a story in English and press Enter.
 Enter on an empty line repeats the last prompt.
 
   /temp <t>    0 = always the most likely word; 1.2+ = chaotic  [0.80]
-  /steps <n>   total tokens, prompt included (1 to 128)         [128]
+  /steps <n>   total tokens, prompt included (1 to 512)         [512]
   /seed [n]    fixed seed; /seed alone = new one every story    [random]
   /verbose     show the tokens the model sees                   [off]
   /heap        memory usage
@@ -571,19 +574,23 @@ Ctrl+R resets the board, Ctrl+C exits the monitor.
 `Once upon a time`, and writes a story:
 
 ```
-[seed 3977079380, temp 0.80, steps 128]
-Once upon a time, there was a little girl named Lily. ...
--- 124 tokens in 3653 ms (33.94 tok/s)
+[seed …, temp 0.80, steps 512]
+Once upon a time, …
+-- … tokens in … ms (… tok/s), end of story
 ```
+
+A story usually takes 10 to 25 seconds and ends on its own.
 
 Each Enter picks a new random seed, so you get a different story every time.
 To get exactly the story below, type `/seed 2026` and then press Enter:
 
 ```
-[seed 2026, temp 0.80, steps 128]
+[seed 2026, temp 0.80, steps 512]
 Once upon a time, there was a little girl named Lily. She loved to play with her toys and feel happy. One day, she found a shiny piece of pictures in her pocket. She was so happy and climbed over.
-But she wanted to share her owner. She started to climb a big tree. But it was too shiny and excited. The p
--- 124 tokens in 3653 ms (33.94 tok/s)
+But she wanted to share her owner. She started to climb a big tree. But it was too shiny and excited. The pictures could have a race that ever cleaned up. Lily looked up at the picture and bumped on a tree.
+As they walked, Anna saw the picture of the picture. She thought it was a picture of a big plant. Suddenly, the waiter stopped. Lily's mom laughed and said, "That was a treasure. You can't blow it and make your mom shout."
+Lily and her mom became good friends and played together. They played and made their feet even met the picture at the picnic because they were just like Tom feeling safe and careful.
+-- 380 tokens in 17753 ms (21.40 tok/s), end of story
 ```
 
 The model has only 260 thousand parameters, so expect stories that are
@@ -595,12 +602,16 @@ Monitor keys: **Ctrl+R** resets the board, **Ctrl+C** exits the monitor.
 
 - **`[seed …, temp …, steps …]`**: the settings used for this story. Write
   the seed down if you like a story: `/seed <that number>` brings it back.
-- **`-- 124 tokens in 3653 ms (33.94 tok/s)`**: 124 new tokens in 3.7
-  seconds. The time also includes processing the prompt, so the real
-  generation speed is slightly higher. If you see about 22 tok/s instead, the
-  board was flashed at 40 MHz (see Troubleshooting).
-- **Generation stops early** when the model emits its end-of-text token, so
-  some stories are shorter than `steps`.
+- **`-- 380 tokens in 17753 ms (21.40 tok/s)`**: 380 new tokens in 17.8
+  seconds. The time also includes processing the prompt. The speed depends on
+  the story's length, because every new token looks back at all the previous
+  ones: short stories run at about 35 tok/s, long ones at about 21. If short
+  stories run well below 30 tok/s, the board was probably flashed at 40 MHz
+  (see Troubleshooting).
+- **`end of story`** means the model finished the story itself. It learned
+  from its training data that every story is followed by a start-of-story
+  token, so when it produces one, the current story is over.
+  **`length limit`** means `/steps` cut the story off, often mid-sentence.
 
 ### Step 5 — Confirm the chip computes exactly what your PC computes
 
@@ -618,14 +629,14 @@ identical** to the one `make desktop` printed in Part 1:
 ```
 [seed …, temp 0.00, steps 64]
 Once upon a time, there was a little girl named Lily. She loved to play outside in the park. One day, she saw a big, red ball. She wanted to play with it, but it was too high. She as
--- 60 tokens in 1600 ms (37.50 tok/s)
+-- 60 tokens in 1656 ms (36.23 tok/s), length limit
 ```
 
 With temperature 0 the seed doesn't matter: the model always picks the most
 likely next token. If the text matches, the board runs the exact same model
 with the exact same arithmetic as your PC.
 
-Afterwards, type `/temp 0.8` and `/steps 128` to go back to the defaults, or
+Afterwards, type `/temp 0.8` and `/steps 512` to go back to the defaults, or
 press **Ctrl+R** to reset the board.
 
 ### Part 3 checklist
@@ -663,7 +674,8 @@ ESP32-S3 (see Part 2, "Updating esp-hal later"). Make sure
 The firmware only prints on the native `USB` port (a consequence of the fix
 above). Plug the cable into the `USB` port.
 
-**Speed is about 22 tok/s instead of 33**
+**Short stories run at about 22 tok/s instead of 35**
+Compare with a short story (`/steps 64`), since long stories are slower anyway.
 The board was written at the default 40 MHz flash clock, which happens if you
 call `espflash flash` by hand. Use `make flash` (or `cargo run --release` in
 `firmware/esp32s3`), which passes `--flash-freq 80mhz`. The bootloader line
@@ -709,7 +721,7 @@ again.
 | any text + Enter | Generates a story that starts with your text |
 | Enter alone | Generates again from the last prompt (with a new seed unless one is fixed) |
 | `/temp <t>` | Sets the temperature, from `0` to `2` |
-| `/steps <n>` | Sets the maximum length in tokens, prompt included, from 1 to 128 |
+| `/steps <n>` | Sets the maximum length in tokens, prompt included, from 1 to the model's limit (512 for stories260K) |
 | `/seed <n>` | Fixes the seed: the same prompt and settings always give the same story |
 | `/seed` | Goes back to a new random seed for every story |
 | `/verbose` | Toggles showing the tokens the model sees |
@@ -834,8 +846,8 @@ Karpathy's tinyllamas that fits on this board.
 | Vocabulary | 512 tokens | 32,000 tokens |
 | `.tlm` file | 270 KB | 15.0 MB |
 | Flash used by the firmware | 2.7% | **97.9%** |
-| RAM used | ~197 KB, all in SRAM | ~2.5 MB: SRAM full, 2.2 MB in PSRAM |
-| Speed on the board | ~34 tokens/s | **~0.8 tokens/s** |
+| RAM used | ~700 KB: 45 KB in SRAM, the 640 KB KV cache in PSRAM | ~4.3 MB: SRAM full, 3.9 MB in PSRAM |
+| Speed on the board | 20 to 35 tokens/s | **~0.7 tokens/s** |
 | Time to flash | a few seconds | ~2 min 15 s |
 
 It is about 40× slower because the board reads all 15 MB of weights from flash
@@ -895,16 +907,16 @@ PSRAM lines, the console shows the new model:
 tinyllm-esp32s3
 model: 15041 KB in flash
 dim=288 hidden=768 layers=6 heads=6 kv_heads=6 vocab=32000 seq=256
-state: 1867 KB on the heap
+state: 3598 KB on the heap
 ```
 
-A full 128-token story takes about two and a half minutes, so start with a
-short one. Type `/temp 0`, `/steps 40`, then press Enter on an empty line:
+A full 256-token story takes more than five minutes, so start with a short
+one. Type `/temp 0`, `/steps 20`, then press Enter on an empty line:
 
 ```
-[seed …, temp 0.00, steps 40]
-Once upon a time, there was a little girl named Lily. She loved to play outside in the sunshine. One day, she saw a big, red ball in the sky. It
--- 36 tokens in 44764 ms (0.80 tok/s)
+[seed …, temp 0.00, steps 20]
+Once upon a time, there was a little girl named Lily. She loved to play outside in
+-- 16 tokens in 22238 ms (0.71 tok/s), length limit
 ```
 
 Words appear about one per second. It is the same text as on the PC, as in
@@ -914,8 +926,8 @@ Part 3.
 
 ```
 Internal | ██████████████████████████████████░ | Used: 99% (Used 227512 of 229376, free: 1864)
-Internal | █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ | Used: 4% (Used 3072 of 73744, free: 70672)
-External | █████████░░░░░░░░░░░░░░░░░░░░░░░░░░ | Used: 27% (Used 2281472 of 8388608, free: 6107136)
+Internal | ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ | Used: 8% (Used 6144 of 73744, free: 67600)
+External | ████████████████░░░░░░░░░░░░░░░░░░░ | Used: 48% (Used 4050944 of 8388608, free: 4337664)
 ```
 
 The SRAM heap filled up first, and everything else went to the PSRAM
@@ -952,8 +964,9 @@ To run on this board, it has to pass four checks:
    an image that doesn't fit. stories15M uses 97.9% of that; this rules out
    stories42M and stories110M.
 4. **RAM:** the total from `/heap` must fit in the 224 KB + 72 KB of SRAM plus
-   8 MB of PSRAM. On the PC, `make desktop … STEPS=128` prints the state size
-   (KV cache and activations). On the board, add about 8 bytes per vocabulary
+   8 MB of PSRAM. On the PC, `make desktop … STEPS=<seq_len>` prints the state
+   size (KV cache and activations); the firmware always reserves the model's
+   full `seq_len`. On the board, add about 8 bytes per vocabulary
    entry for the logits and 12 for the tokenizer index, plus the per-row weight
    scales.
 
