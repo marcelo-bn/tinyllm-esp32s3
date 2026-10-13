@@ -165,7 +165,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tinyllm-s3-tools"
+name = "tinyllm-esp32s3-tools"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

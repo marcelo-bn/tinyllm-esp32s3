@@ -1,6 +1,18 @@
-# tinyllm-s3
+# tinyllm-esp32s3
 
 https://github.com/user-attachments/assets/2a377652-7823-4910-9f27-54a1a05c2b26
+
+A Llama-style language model running bare-metal (`no_std` Rust) on an
+ESP32-S3, with int8 weights embedded in flash:
+
+| | stories260K | stories15M |
+|---|---|---|
+| Model in flash | 270 KB | 15.0 MB (97.9% of the flash) |
+| RAM used | ~700 KB | ~4.3 MB (mostly PSRAM) |
+| Speed on the board | **20–35 tokens/s** | **~0.7 tokens/s** |
+
+The same inference code runs on your PC, and `make check` verifies that its
+output matches an independent numpy implementation token for token.
 
 This guide takes you from a fresh machine to a tiny language model generating
 text on an ESP32-S3 N16R8 (16 MB flash, 8 MB PSRAM). Follow the parts in order:
@@ -983,3 +995,18 @@ prompt also take a second each. Use `/steps 40` for quicker tests.
 
 **`make check` fails with stories15M**
 See Step 2: a late divergence after a near-tie is expected with this model.
+
+---
+
+## Credits
+
+- The model format, tokenizer and sampler follow Andrej Karpathy's
+  [llama2.c](https://github.com/karpathy/llama2.c) (MIT).
+- The stories260K and stories15M checkpoints are Karpathy's
+  [tinyllamas](https://huggingface.co/karpathy/tinyllamas), trained on the
+  TinyStories dataset. They are downloaded by `make models`, not stored in
+  this repository.
+
+## License
+
+[MIT](LICENSE)

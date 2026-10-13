@@ -1,0 +1,37 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Rust (desktop) and Python (numpy reference) must produce the same story
+  # for stories260K. The firmware isn't built here: it needs the esp toolchain.
+  rust-vs-python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v6
+
+      # only the small model: `make models` would also fetch stories15M (~60 MB)
+      - uses: actions/cache@v4
+        with:
+          path: |
+            models/stories260K.bin
+            models/tok512.bin
+          key: models-stories260K-v1
+
+      - name: Export stories260K
+        run: make models/stories260K.tlm models/tok512.bin
+
+      # built separately because `make check` hides cargo's stderr
+      - name: Build desktop CLI
+        run: cargo build --release -p tinyllm-desktop
+
+      - name: Rust == Python
+        run: make check

@@ -3,6 +3,7 @@ name         = "tinyllm-esp32s3"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.95"
+license      = "MIT"
 
 # Versions and features aligned with `esp-generate` 1.4.0:
 #   esp-generate --headless -o esp32s3 -o esp32s3-wroom-1-octal-psram \

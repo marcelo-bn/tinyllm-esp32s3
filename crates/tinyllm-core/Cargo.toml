@@ -2,6 +2,7 @@
 name = "tinyllm-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "Tiny transformer inference (quantized llama2.c format) in no_std + alloc"
 
 [dependencies]
